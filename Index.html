@@ -1,75 +1,229 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Reusable Studio Engine</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { 
-      width: 100%; height: 100%; 
-      background: #050509; 
-      font-family: system-ui, sans-serif; 
-    }
-    canvas#studio-canvas { 
-      display: block; width: 100%; height: 100%; 
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Float</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #06060e;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    cursor: none;
+    font-family: 'Courier New', monospace;
+  }
+
+  canvas {
+    display: block;
+  }
+
+  #hint {
+    position: fixed;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(255,255,255,0.18);
+    font-size: 11px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    pointer-events: none;
+    animation: fadeHint 4s ease forwards;
+    animation-delay: 1s;
+    opacity: 0;
+  }
+
+  @keyframes fadeHint {
+    0%   { opacity: 0; }
+    20%  { opacity: 1; }
+    80%  { opacity: 1; }
+    100% { opacity: 0; }
+  }
+</style>
 </head>
 <body>
-  <canvas id="studio-canvas"></canvas>
-  
-  <script>
-    // All your code here - no imports needed
-    const canvas = document.getElementById("studio-canvas");
-    const ctx = canvas.getContext("2d");
-    
-    const state = { time: 0, dpi: window.devicePixelRatio || 1, mouseX: 0.5 };
-    
-    // setupCanvas
-    function setupCanvas() {
-      function resize() {
-        const { innerWidth: w, innerHeight: h } = window;
-        canvas.width = w * state.dpi;
-        canvas.height = h * state.dpi;
-        canvas.style.width = w + "px";
-        canvas.style.height = h + "px";
-        ctx.setTransform(state.dpi, 0, 0, state.dpi, 0, 0);
-      }
-      window.addEventListener("resize", resize);
-      resize();
-    }
-    
-    // input
-    canvas.addEventListener("mousemove", (e) => {
-      const rect = canvas.getBoundingClientRect();
-      state.mouseX = (e.clientX - rect.left) / rect.width;
-    });
-    
-    // loop
-    function loop(timestamp) {
-      state.time = timestamp / 1000;
-      
-      const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
-      
-      ctx.clearRect(0, 0, w, h);
-      
-      const centerX = w * state.mouseX;
-      const centerY = h / 2;
-      const radius = 40 + 20 * Math.sin(state.time * 4);
-      
-      ctx.fillStyle = "#f94144";
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-      ctx.fill();
-      
-      requestAnimationFrame(loop);
-    }
-    
-    // start everything
-    setupCanvas();
-    requestAnimationFrame(loop);
-  </script>
+<canvas id="c"></canvas>
+<div id="hint">move cursor to push the puck</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+let W, H;
+function resize() {
+  W = canvas.width  = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Puck state
+const puck = {
+  x: 0, y: 0,
+  vx: 1.4, vy: 0.9,
+  r: 38,
+  trail: []
+};
+
+// Cursor
+const mouse = { x: -999, y: -999 };
+window.addEventListener('mousemove', e => {
+  mouse.x = e.clientX;
+  mouse.y = e.clientY;
+});
+
+// Init puck center
+puck.x = window.innerWidth / 2;
+puck.y = window.innerHeight / 2;
+
+// Physics constants
+const FRICTION    = 0.995;
+const PUSH_RADIUS = 90;
+const PUSH_FORCE  = 0.55;
+const TRAIL_LEN   = 22;
+
+// Subtle grid lines
+function drawGrid() {
+  const spacing = 60;
+  ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += spacing) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  for (let y = 0; y < H; y += spacing) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+}
+
+// Custom cursor dot
+function drawCursor() {
+  if (mouse.x < 0) return;
+  ctx.beginPath();
+  ctx.arc(mouse.x, mouse.y, 4, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.fill();
+
+  // influence radius ring
+  ctx.beginPath();
+  ctx.arc(mouse.x, mouse.y, PUSH_RADIUS, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+let t = 0;
+function animate() {
+  requestAnimationFrame(animate);
+  t += 0.012;
+
+  // Clear
+  ctx.fillStyle = '#06060e';
+  ctx.fillRect(0, 0, W, H);
+  drawGrid();
+
+  // --- Physics ---
+
+  // Cursor push
+  const dx = puck.x - mouse.x;
+  const dy = puck.y - mouse.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < PUSH_RADIUS && dist > 0.1) {
+    const force = (1 - dist / PUSH_RADIUS) * PUSH_FORCE;
+    puck.vx += (dx / dist) * force;
+    puck.vy += (dy / dist) * force;
+  }
+
+  // Friction
+  puck.vx *= FRICTION;
+  puck.vy *= FRICTION;
+
+  // Move
+  puck.x += puck.vx;
+  puck.y += puck.vy;
+
+  // Wall bounce with slight damping
+  if (puck.x - puck.r < 0)  { puck.x = puck.r;  puck.vx = Math.abs(puck.vx) * 0.85; }
+  if (puck.x + puck.r > W)  { puck.x = W - puck.r; puck.vx = -Math.abs(puck.vx) * 0.85; }
+  if (puck.y - puck.r < 0)  { puck.y = puck.r;  puck.vy = Math.abs(puck.vy) * 0.85; }
+  if (puck.y + puck.r > H)  { puck.y = H - puck.r; puck.vy = -Math.abs(puck.vy) * 0.85; }
+
+  // Trail
+  puck.trail.push({ x: puck.x, y: puck.y });
+  if (puck.trail.length > TRAIL_LEN) puck.trail.shift();
+
+  // --- Draw trail ---
+  for (let i = 1; i < puck.trail.length; i++) {
+    const alpha = (i / TRAIL_LEN) * 0.18;
+    const r = puck.r * (i / TRAIL_LEN) * 0.7;
+    ctx.beginPath();
+    ctx.arc(puck.trail[i].x, puck.trail[i].y, r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(130, 210, 255, ${alpha})`;
+    ctx.fill();
+  }
+
+  // --- Draw puck ---
+  const speed = Math.sqrt(puck.vx * puck.vx + puck.vy * puck.vy);
+  const glowIntensity = Math.min(speed * 4, 30);
+
+  // Outer glow
+  const glow = ctx.createRadialGradient(puck.x, puck.y, puck.r * 0.4, puck.x, puck.y, puck.r * 2.4);
+  glow.addColorStop(0, `rgba(100, 190, 255, ${0.08 + speed * 0.015})`);
+  glow.addColorStop(1, 'rgba(100, 190, 255, 0)');
+  ctx.beginPath();
+  ctx.arc(puck.x, puck.y, puck.r * 2.4, 0, Math.PI * 2);
+  ctx.fillStyle = glow;
+  ctx.fill();
+
+  // Body gradient — shifts with velocity direction
+  const angle = Math.atan2(puck.vy, puck.vx);
+  const offX = Math.cos(angle + Math.PI) * puck.r * 0.35;
+  const offY = Math.sin(angle + Math.PI) * puck.r * 0.35;
+  const body = ctx.createRadialGradient(
+    puck.x + offX, puck.y + offY, 2,
+    puck.x, puck.y, puck.r
+  );
+  body.addColorStop(0, '#d0efff');
+  body.addColorStop(0.4, '#5ab6e8');
+  body.addColorStop(1, '#1a3a55');
+
+  ctx.beginPath();
+  ctx.arc(puck.x, puck.y, puck.r, 0, Math.PI * 2);
+  ctx.fillStyle = body;
+  ctx.fill();
+
+  // Specular highlight
+  const spec = ctx.createRadialGradient(
+    puck.x - puck.r * 0.3, puck.y - puck.r * 0.3, 1,
+    puck.x - puck.r * 0.3, puck.y - puck.r * 0.3, puck.r * 0.55
+  );
+  spec.addColorStop(0, 'rgba(255,255,255,0.55)');
+  spec.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.beginPath();
+  ctx.arc(puck.x, puck.y, puck.r, 0, Math.PI * 2);
+  ctx.fillStyle = spec;
+  ctx.fill();
+
+  // Rim
+  ctx.beginPath();
+  ctx.arc(puck.x, puck.y, puck.r, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(180, 230, 255, 0.25)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Subtle breathing pulse ring
+  const pulse = Math.sin(t * 2) * 0.5 + 0.5;
+  ctx.beginPath();
+  ctx.arc(puck.x, puck.y, puck.r + 6 + pulse * 5, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(100, 200, 255, ${0.06 + pulse * 0.04})`;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  drawCursor();
+}
+
+animate();
+</script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 export function initInput(canvas, state) {
+  // ONE SIGNAL: mouse X position (0 to 1)
   canvas.addEventListener("mousemove", (event) => {
     const rect = canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    state.mouseX = x / rect.width; // normalize 0–1
+    state.mouseX = (event.clientX - rect.left) / rect.width;
   });
 }
